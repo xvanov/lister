@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html><head><title>Facebook</title></head><body>
+<!-- Saved shape of Facebook's "Your listings" cards (accessible names are what the adapter uses). -->
+<div role="main"><span>Your listings</span>
+  <div data-card="1234567890123456">
+    <span>TEST — do not buy</span>
+    <div role="button" tabindex="0" aria-label="Mark as sold TEST — do not buy" onclick="window.__clicked.push('mark-sold')">Mark as sold</div>
+    <div role="button" tabindex="0" aria-label="More options for TEST — do not buy" onclick="openMenu()">…</div>
+  </div>
+  <div data-card="2222222222222222">
+    <span>Post hole digger</span>
+    <div role="button" tabindex="0" aria-label="Mark as sold Post hole digger" onclick="window.__clicked.push('mark-sold-2')">Mark as sold</div>
+    <div role="button" tabindex="0" aria-label="More options for Post hole digger" onclick="openMenu()">…</div>
+  </div>
+</div>
+<div id="menu" role="menu" hidden>
+  <div role="menuitem" tabindex="0" onclick="openDialog()">Edit listing</div>
+  <div role="menuitem" tabindex="0" onclick="openDialog()">Delete listing</div>
+</div>
+<div id="dialog" role="dialog" aria-label="Delete listing?" hidden>
+  <span>Delete listing? You can't undo this.</span>
+  <div role="button" tabindex="0" aria-label="Cancel" onclick="closeDialog()">Cancel</div>
+  <div role="button" tabindex="0" aria-label="Delete" onclick="window.__clicked.push('delete-confirm')">Delete</div>
+</div>
+<script>
+  window.__clicked = [];
+  function openMenu() { window.__clicked.push('menu'); document.getElementById('menu').hidden = false; }
+  function openDialog() { window.__clicked.push('delete-item'); document.getElementById('menu').hidden = true; document.getElementById('dialog').hidden = false; }
+  function closeDialog() { window.__clicked.push('cancel'); document.getElementById('dialog').hidden = true; }
+</script>
+</body></html>

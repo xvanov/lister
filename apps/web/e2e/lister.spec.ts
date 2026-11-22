@@ -95,9 +95,15 @@ test("an API client posts a listing: dry run reaches DRY_RUN_OK and a signed web
     // A seller account (dry run by default).
     await page.getByLabel("Account label").fill("Smoke FB");
     await page.getByLabel("Facebook user id").fill("100000000000001");
-    await page.getByRole("button", { name: "Add Facebook account" }).click();
+    await page.getByRole("button", { name: "Add account" }).click();
     await expect(page.getByText("Smoke FB")).toBeVisible();
     await expect(page.getByText("dry run", { exact: true })).toBeVisible();
+
+    // The label is editable from the console.
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByRole("table").getByLabel("Account label").fill("Smoke seller");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Smoke seller")).toBeVisible();
 
     // An API key, shown once.
     await page.getByLabel("API key name").fill("smoke-app");

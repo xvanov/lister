@@ -1,7 +1,8 @@
 /**
  * Who is calling: an API key (Authorization: Bearer <key>) mapped to one
  * organization and a set of scopes. Two sources:
- *   1. LISTER_API_CLIENTS in .env (JSON; the org named by slug)
+ *   1. LISTER_API_CLIENTS in .env (JSON; `org` = the org's id or slug; an id
+ *      survives renaming the org)
  *   2. the api_client table (keys created in the UI; only a SHA-256 is kept)
  * The tenant always comes from the key, never from the request body.
  */
@@ -78,8 +79,8 @@ export async function resolveApiKey(key: string): Promise<ApiCaller | null> {
   if (!key) return null;
   for (const c of parseEnvClients(env().LISTER_API_CLIENTS)) {
     if (!sameSecret(c.key, key)) continue;
-    const org = await db.organization.findUnique({
-      where: { slug: c.org },
+    const org = await db.organization.findFirst({
+      where: { OR: [{ id: c.org }, { slug: c.org }] },
       select: { id: true },
     });
     if (!org) return null;

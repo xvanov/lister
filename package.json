@@ -40,11 +40,14 @@
     "postinstall": "npm run db:generate",
     "inbox": "echo 'Local mail inbox: http://localhost:8097'",
     "lister:seed": "node --import tsx apps/worker/src/cli/seed-lister.ts",
+    "org:join": "node --import tsx apps/worker/src/cli/org-join.ts",
     "account:login": "node --import tsx apps/worker/src/cli/account.ts login",
     "account:check": "node --import tsx apps/worker/src/cli/account.ts check",
     "account:live": "node --import tsx apps/worker/src/cli/account.ts live",
     "account:headless": "node --import tsx apps/worker/src/cli/account.ts headless",
-    "account:list": "node --import tsx apps/worker/src/cli/account.ts list"
+    "account:list": "node --import tsx apps/worker/src/cli/account.ts list",
+    "account:settings": "node --import tsx apps/worker/src/cli/account.ts settings",
+    "listing:run": "node --import tsx apps/worker/src/cli/listing-run.ts"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

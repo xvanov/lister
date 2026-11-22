@@ -7,6 +7,7 @@
  *   npm run account:live -- <accountId> on|off   flip liveMode (on = Publish gets clicked)
  *   npm run account:headless -- <accountId> on|off
  *   npm run account:list
+ *   npm run account:settings -- <accountId> ['{"contactEmail":"..."}']   show / merge settings JSON
  *
  * login and check take the same per-account lock as the worker, so they never
  * open a profile a running job is using.
@@ -15,6 +16,7 @@ import "@repo/env/load";
 
 import { db } from "@repo/db";
 import { closeQueue, withAccountLock } from "@repo/jobs";
+import { craigslistSettings } from "@repo/lister";
 import { checkAccount, launchAccount, profileDir } from "@repo/lister/runner";
 
 const LOGIN_URL: Record<string, string> = {
@@ -72,6 +74,17 @@ async function main() {
       console.log(`"${a.label}" liveMode=${liveMode}${liveMode ? "  ← listings will really be PUBLISHED" : " (dry run)"}`);
       break;
     }
+    case "settings": {
+      const a = await account(id);
+      if (arg) {
+        const patch = JSON.parse(arg) as Record<string, unknown>;
+        const merged = { ...((a.settings as Record<string, unknown> | null) ?? {}), ...patch };
+        if (a.platform === "CRAIGSLIST") craigslistSettings(merged); // throws a readable error
+        await db.sellerAccount.update({ where: { id: a.id }, data: { settings: merged as object } });
+        console.log(JSON.stringify(merged, null, 2));
+      } else console.log(JSON.stringify(a.settings ?? {}, null, 2));
+      break;
+    }
     case "headless": {
       const a = await account(id);
       const headless = onOff(arg);
@@ -80,7 +93,7 @@ async function main() {
       break;
     }
     default:
-      throw new Error("commands: list | login <id> | check <id> | live <id> on|off | headless <id> on|off");
+      throw new Error("commands: list | login <id> | check <id> | live <id> on|off | headless <id> on|off | settings <id> [json]");
   }
 }
 

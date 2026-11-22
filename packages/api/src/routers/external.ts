@@ -115,6 +115,19 @@ const listingsRouter = createTRPCRouter({
       return { status: "QUEUED" as const };
     }),
 
+  /** v1.2: renew a LIVE listing (Craigslist; at most every 48h by default). */
+  renew: apiProcedure("listings:write")
+    .input(listingIdInput)
+    .mutation(async ({ ctx, input }) => {
+      const { action } = await requestAction(
+        ctx.organizationId,
+        input.listingId,
+        "renew",
+      );
+      await queueAction(ctx.organizationId, input.listingId, action);
+      return { status: "QUEUED" as const };
+    }),
+
   retry: apiProcedure("listings:write")
     .input(listingIdInput)
     .mutation(async ({ ctx, input }) => {

@@ -421,6 +421,9 @@ model SellerAccount {
   profileName       String?
   lastCheckedAt     DateTime?
   lastError         String?
+  /// Platform settings (JSON). Craigslist: contactEmail, replyPrivacy, area,
+  /// subarea, postal, pacing {perHour, perDay, renewAfterHours}. See craigslist-plan.ts.
+  settings          Json?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
@@ -457,6 +460,11 @@ model Listing {
   pendingAction     String?
   platformListingId String?
   url               String?
+  /// Per-platform options from the caller (JSON). Craigslist: { area, subarea, category }.
+  platformOptions   Json?
+  /// When the platform really published it (live), and when it was last renewed.
+  postedAt          DateTime?
+  renewedAt         DateTime?
   lastError         String?
   /// media_asset keys of the screenshots of the latest run, in step order.
   screenshotKeys    String[]

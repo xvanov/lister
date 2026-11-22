@@ -10,7 +10,7 @@ Other apps call its API; the contract is [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
 ```bash
 ./scripts/setup.sh       # .env, deps, Postgres + Redis + mail inbox, migrations
-npm run lister:seed      # org "rentus" + the Facebook account (dry run)
+npm run lister:seed      # org "Kalin" + the Facebook and Craigslist accounts (dry run)
 make dev                 # web on http://localhost:3240 + the worker
 ```
 
@@ -37,13 +37,20 @@ npm run account:check -- <accountId>     # opens the profile, sets READY / NEEDS
 npm run account:login -- <accountId>     # HEADED browser on the profile: log in, close it
 npm run account:live -- <accountId> on   # REAL posting (Publish gets clicked). off = dry run
 npm run account:headless -- <accountId> off
+npm run account:settings -- <accountId> '{"contactEmail":"you@example.com"}'   # merge settings JSON
+npm run listing:run -- <listingId> create|markSold|remove|renew   # run one action now (dry run unless live)
 ```
+
+Labels and settings are also editable in the console (Edit). Craigslist:
+see [docs/craigslist.md](docs/craigslist.md) (login, settings, pacing, and how
+to dry-run mark sold / remove / renew on your own test listing).
 
 New accounts start in dry run: a create walks every page of the form,
 screenshots each step and stops before Publish (status `DRY_RUN_OK`). The
 operator console at http://localhost:3240/app/lister shows accounts, API keys,
-listings, errors and screenshots (sign up there first; the seeded org has no
-human member).
+listings, errors and screenshots. Sign up there, then
+`npm run org:join -- <your email>` to own the seeded "Kalin" org (where the
+accounts live; it has no human member until then).
 
 ## Calling the API
 

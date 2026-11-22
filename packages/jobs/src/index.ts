@@ -17,4 +17,4 @@ export {
   type JobLike,
 } from "./worker";
 export { SCHEDULES, registerSchedules } from "./schedules";
-export { withAccountLock, enqueueDelivery, accountLockKey } from "./lister";
+export { withAccountLock, enqueueDelivery, accountLockKey, runListing } from "./lister";

@@ -73,20 +73,80 @@ export function ListerConsole() {
 
   const [keyName, setKeyName] = useState("");
   const [newKey, setNewKey] = useState<string | null>(null);
-  const [acct, setAcct] = useState({ label: "", externalAccountId: "" });
+  const [acct, setAcct] = useState({
+    platform: "FACEBOOK" as "FACEBOOK" | "CRAIGSLIST",
+    label: "",
+    externalAccountId: "",
+  });
+  const [editing, setEditing] = useState<{
+    id: string;
+    label: string;
+    settings: string;
+  } | null>(null);
 
   const accountColumns: DataTableColumn<Account>[] = [
     {
       key: "label",
       header: "Account",
-      cell: (a) => (
-        <div>
-          <div className="font-medium">{a.label}</div>
-          <div className="text-xs text-muted-foreground">
-            {a.platform} · {a.externalAccountId} · {a.id}
+      cell: (a) =>
+        editing?.id === a.id ? (
+          <form
+            className="space-y-1"
+            onSubmit={(e) => {
+              e.preventDefault();
+              let settings: Record<string, unknown> | null | undefined;
+              try {
+                settings = editing.settings.trim()
+                  ? (JSON.parse(editing.settings) as Record<string, unknown>)
+                  : null;
+              } catch {
+                toast.error("Settings must be JSON");
+                return;
+              }
+              updateAccount.mutate(
+                { accountId: a.id, label: editing.label, settings },
+                { onSuccess: () => setEditing(null) },
+              );
+            }}
+          >
+            <Input
+              aria-label="Account label"
+              value={editing.label}
+              onChange={(e) => setEditing({ ...editing, label: e.target.value })}
+            />
+            <textarea
+              aria-label="Account settings (JSON)"
+              className="h-28 w-72 rounded-md border bg-background p-2 font-mono text-xs"
+              placeholder={
+                a.platform === "CRAIGSLIST"
+                  ? '{"contactEmail":"you@example.com","area":"rdu","city":"Durham","postal":"27701","pacing":{"perHour":1,"perDay":6,"renewAfterHours":48}}'
+                  : "{}"
+              }
+              value={editing.settings}
+              onChange={(e) => setEditing({ ...editing, settings: e.target.value })}
+            />
+            <div className="flex gap-1">
+              <Button size="sm" type="submit" disabled={!editing.label.trim()}>
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" type="button" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div>
+            <div className="font-medium">{a.label}</div>
+            <div className="text-xs text-muted-foreground">
+              {a.platform} · {a.externalAccountId} · {a.id}
+            </div>
+            {a.settings != null && (
+              <div className="max-w-xs truncate font-mono text-xs text-muted-foreground">
+                {JSON.stringify(a.settings)}
+              </div>
+            )}
           </div>
-        </div>
-      ),
+        ),
     },
     {
       key: "status",
@@ -122,6 +182,19 @@ export function ListerConsole() {
       align: "right",
       cell: (a) => (
         <div className="flex flex-wrap justify-end gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              setEditing({
+                id: a.id,
+                label: a.label,
+                settings: a.settings == null ? "" : JSON.stringify(a.settings, null, 2),
+              })
+            }
+          >
+            Edit
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -249,6 +322,17 @@ export function ListerConsole() {
               Retry
             </Button>
           )}
+          {l.status === "LIVE" && l.platform === "CRAIGSLIST" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                listingAction.mutate({ listingId: l.id, action: "renew" })
+              }
+            >
+              Renew
+            </Button>
+          )}
           {l.status !== "SOLD" && l.status !== "REMOVED" && (
             <>
               <Button
@@ -313,10 +397,24 @@ export function ListerConsole() {
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              createAccount.mutate({ platform: "FACEBOOK", ...acct });
-              setAcct({ label: "", externalAccountId: "" });
+              createAccount.mutate(acct);
+              setAcct({ ...acct, label: "", externalAccountId: "" });
             }}
           >
+            <select
+              aria-label="Platform"
+              className="h-9 rounded-md border bg-background px-2 text-sm"
+              value={acct.platform}
+              onChange={(e) =>
+                setAcct({
+                  ...acct,
+                  platform: e.target.value as "FACEBOOK" | "CRAIGSLIST",
+                })
+              }
+            >
+              <option value="FACEBOOK">Facebook</option>
+              <option value="CRAIGSLIST">Craigslist</option>
+            </select>
             <Input
               aria-label="Account label"
               placeholder="Label"
@@ -325,8 +423,8 @@ export function ListerConsole() {
               onChange={(e) => setAcct({ ...acct, label: e.target.value })}
             />
             <Input
-              aria-label="Facebook user id"
-              placeholder="Facebook user id"
+              aria-label={acct.platform === "FACEBOOK" ? "Facebook user id" : "Craigslist account email"}
+              placeholder={acct.platform === "FACEBOOK" ? "Facebook user id" : "Craigslist account email"}
               className="w-48"
               value={acct.externalAccountId}
               onChange={(e) =>
@@ -338,7 +436,7 @@ export function ListerConsole() {
               variant="secondary"
               disabled={!acct.label.trim() || !acct.externalAccountId.trim()}
             >
-              Add Facebook account
+              Add account
             </Button>
           </form>
         </CardContent>

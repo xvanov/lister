@@ -19,6 +19,11 @@ describe("guardClick", () => {
     expect(guardClick("Publish", { live: true, finalStep: /^publish$/i }).allowed).toBe(true);
     expect(guardClick("Delete listing", { live: true, finalStep: /^publish$/i }).allowed).toBe(false);
   });
+  it("a dry run may click a label that only opens a confirmation, never the confirm", () => {
+    expect(guardClick("Delete listing", { live: false, opensConfirm: /^delete listing$/i }).allowed).toBe(true);
+    expect(guardClick("Delete", { live: false, opensConfirm: /^delete listing$/i }).allowed).toBe(false);
+    expect(guardClick("Boost listing", { live: false, opensConfirm: /.*/ }).allowed).toBe(false);
+  });
   it("refuses unlabelled controls", () => {
     expect(guardClick("  ", { live: true }).allowed).toBe(false);
   });

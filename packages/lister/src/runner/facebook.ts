@@ -28,12 +28,15 @@ import {
   findNewListingId,
   itemUrl,
   jsonScriptBlocks,
+  listingIdFromPublish,
+  listingIdFromUrl,
   matchOption,
   parseJsonBlob,
   stopFromBody,
   stopFromUrl,
   type FbListing,
 } from "./facebook-selling";
+import { actOnCard } from "./facebook-card";
 import { findMoneyStep, guardClick } from "./guard";
 import {
   NeedsHumanError,
@@ -317,13 +320,16 @@ async function create(ctx: RunContext): Promise<RunResult> {
       log(`[facebook] ${beforeIds.size} listing(s) on Your listings before publish`);
     }
 
-    await go(page, CREATE_URL);
-    // The form renders a skeleton first; wait for the real fields.
-    await page
-      .locator('input[type=file][accept^="image/"]')
-      .first()
-      .waitFor({ state: "attached", timeout: 60_000 })
-      .catch(() => undefined);
+    // The form renders a skeleton (sometimes only the splash logo) first.
+    // Poll for the real photo input; a locator wait can return early when
+    // Facebook swaps documents, and a stuck splash needs one reload.
+    const photoInput = page.locator('input[type=file][accept^="image/"]');
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await go(page, CREATE_URL);
+      for (let i = 0; i < 45 && (await photoInput.count().catch(() => 0)) === 0; i++) await settle(page, 1000);
+      if ((await photoInput.count().catch(() => 0)) > 0) break;
+      log(`[facebook] create form did not render (attempt ${attempt}); ${attempt < 2 ? "reloading" : "giving up"}`);
+    }
     await settle(page, 2000);
     await rec.shot(page, "create-opened");
     await assertNoStop(page, "create form");
@@ -442,31 +448,74 @@ async function create(ctx: RunContext): Promise<RunResult> {
 
     if (money) throw new Error(`the last page shows a money step ("${money}"); not publishing`);
     if (!publishEnabled) throw new Error('"Publish" is disabled');
-    await guardedClick(publish, "Publish", { live, finalStep: /^publish$/i });
-    let landed = false;
-    for (let i = 0; i < 60; i++) {
-      await settle(page, 2000);
-      if (/marketplace\/you\/selling/.test(page.url())) {
-        landed = true;
-        break;
+
+    // PRIMARY id source: Facebook's own responses to Publish (the create
+    // mutation's JSON) and any URL it navigates to. Collected from the click on.
+    const publishBodies: string[] = [];
+    const navUrls: string[] = [];
+    const onPublishResponse = async (r: Response) => {
+      if (!/\/api\/graphql\/?/.test(r.url()) || r.request().method() !== "POST") return;
+      const post = r.request().postData() ?? "";
+      if (!/mutation|create|publish/i.test(post)) return;
+      try {
+        publishBodies.push(await r.text());
+      } catch {
+        /* body gone */
       }
-      if (/something isn't working/i.test(await pageText(page)))
-        throw new Error("Facebook says: Something isn't working (after Publish)");
+    };
+    const onNav = (f: { url(): string }) => navUrls.push(f.url());
+    page.on("response", onPublishResponse);
+    page.on("framenavigated", onNav);
+    const publishedAt = Math.floor(Date.now() / 1000);
+    let landed = false;
+    try {
+      await guardedClick(publish, "Publish", { live, finalStep: /^publish$/i });
+      for (let i = 0; i < 60; i++) {
+        await settle(page, 2000);
+        if (/marketplace\/you\/selling|marketplace\/item\//.test(page.url())) {
+          landed = true;
+          break;
+        }
+        const t = await pageText(page);
+        if (/something isn't working/i.test(t))
+          throw new Error("Facebook says: Something isn't working (after Publish)");
+        const stop = stopFromBody(t);
+        if (stop) throw new Error(`${stop} (after Publish)`);
+      }
+      await settle(page, 1500);
+    } finally {
+      page.off("response", onPublishResponse);
+      page.off("framenavigated", onNav);
     }
     await rec.shot(page, "after-publish");
-    if (!landed) throw new Error("Publish did not reach Your listings within 2 minutes; check the account before retrying");
+    const fromPublish =
+      listingIdFromPublish(publishBodies.flatMap(parseJsonBlob), [account.externalAccountId]) ??
+      navUrls.map(listingIdFromUrl).find((x) => x) ??
+      null;
+    if (fromPublish) log(`[facebook] new listing id ${fromPublish} (from Facebook's publish response)`);
+    if (!landed && !fromPublish)
+      throw new Error("Publish did not reach Your listings within 2 minutes; check the account before retrying");
     await closeUpsells(page);
+    if (fromPublish) {
+      return { status: "LIVE", platformListingId: fromPublish, url: itemUrl(fromPublish), lastError: null, postedAt: new Date() };
+    }
 
+    // FALLBACK: read Your listings back, match title + price, newest.
     const after = await readSelling(page);
     await rec.shot(page, "your-listings");
-    const id = findNewListingId(after, listing.title, beforeIds);
+    const id = findNewListingId(after, listing.title, beforeIds, {
+      priceCents: listing.priceCents,
+      since: publishedAt,
+    });
     if (!id) {
       return {
         status: "LIVE",
-        lastError: "published, but the new listing id could not be read from Your listings",
+        lastError: "published, but the new listing id could not be read (publish response or Your listings)",
+        postedAt: new Date(),
       };
     }
-    return { status: "LIVE", platformListingId: id, url: itemUrl(id), lastError: null };
+    log(`[facebook] new listing id ${id} (from Your listings read-back)`);
+    return { status: "LIVE", platformListingId: id, url: itemUrl(id), lastError: null, postedAt: new Date() };
   });
 }
 
@@ -488,61 +537,9 @@ async function onCard(ctx: RunContext, action: "markSold" | "remove"): Promise<R
       return { status: doneStatus, lastError: null };
     }
     if (d.kind === "failed") throw new Error(d.detail);
-    const title = d.listing.title;
-
-    if (action === "markSold") {
-      const names = [`Mark as sold ${title}`, `Mark as rented ${title}`];
-      let btn: Locator | null = null;
-      let label = "";
-      for (const n of names) {
-        const loc = page.getByRole("button", { name: n, exact: true });
-        if ((await loc.count()) === 1) {
-          btn = loc;
-          label = n.slice(0, n.length - title.length - 1);
-        }
-      }
-      if (!btn) throw new Error(`expected one "Mark as sold" button for listing ${id}; nothing clicked`);
-      if (!live) {
-        await btn.scrollIntoViewIfNeeded().catch(() => undefined);
-        await rec.shot(page, "dry-run-stopped-before-mark-sold");
-        return { status: "LIVE", lastError: `dry run: stopped before "${label}" (account is not live)` };
-      }
-      await guardedClick(btn, label, { live, finalStep: /^mark as (sold|rented)$/i });
-      await settle(page, 2500);
-      for (let i = 0; i < 3; i++) {
-        const dlg = page.getByRole("dialog").last();
-        if ((await dlg.count()) === 0) break;
-        const confirm = dlg.getByRole("button", { name: /^(mark as (sold|rented)|confirm|done)$/i }).first();
-        const dismiss = dlg.getByRole("button", { name: /^(close|not now|skip|cancel)$/i }).first();
-        if ((await confirm.count()) > 0) {
-          const l = (await confirm.innerText().catch(() => "")) || "Confirm";
-          if (/mark as/i.test(l)) await guardedClick(confirm, l, { live, finalStep: /^mark as (sold|rented)$/i });
-          else await confirm.click();
-        } else if ((await dismiss.count()) > 0) await dismiss.click();
-        else break;
-        await settle(page, 1500);
-      }
-    } else {
-      // Delete lives in the card's "More options for <title>" menu.
-      const more = page.getByRole("button", { name: `More options for ${title}`, exact: true });
-      if ((await more.count()) !== 1) throw new Error(`expected one menu button for listing ${id}; nothing clicked`);
-      await more.click();
-      await settle(page, 1500);
-      const del = page.getByRole("menuitem", { name: /^delete( listing)?$/i }).first();
-      if ((await del.count()) === 0) throw new Error('no "Delete listing" in the card menu');
-      if (!live) {
-        await rec.shot(page, "dry-run-stopped-before-delete");
-        await page.keyboard.press("Escape").catch(() => undefined);
-        return { status: "LIVE", lastError: 'dry run: stopped before "Delete listing" (account is not live)' };
-      }
-      await guardedClick(del, "Delete listing", { live, finalStep: /^delete( listing)?$/i });
-      await settle(page, 2000);
-      const confirm = page.getByRole("dialog").last().getByRole("button", { name: /^delete$/i }).first();
-      if ((await confirm.count()) === 0) throw new Error("no Delete confirm button in the dialog");
-      await guardedClick(confirm, "Delete", { live, finalStep: /^delete$/i });
-      await settle(page, 3000);
-      await closeUpsells(page);
-    }
+    const dry = await actOnCard(page, { action, id, title: d.listing.title, live, rec, log });
+    if (dry) return dry;
+    await closeUpsells(page);
 
     const after = await readSelling(page);
     await rec.shot(page, `${action}-after`);
@@ -572,8 +569,13 @@ async function checkSession(account: RunAccount): Promise<SessionCheck> {
   });
 }
 
+async function renew(): Promise<RunResult> {
+  throw new Error("Facebook listings are not renewed by lister (Facebook has no 48h renew); nothing done");
+}
+
 export const facebookAdapter: PlatformAdapter = {
   create,
+  renew,
   markSold: (ctx) => onCard(ctx, "markSold"),
   remove: (ctx) => onCard(ctx, "remove"),
   checkSession,

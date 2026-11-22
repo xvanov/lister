@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!-- RECONSTRUCTED shape of accounts.craigslist.org/login/home (postings tab):
+     one <tr> per posting, small POST forms whose action is the posting's
+     manage URL, button values renew / delete / edit / display. Re-save the
+     real page once the owner has logged in and has a posting (see docs/craigslist.md). -->
+<html><head><title>craigslist account</title></head><body>
+<header><span>home of owner@example.com</span> <a href="/login/logout">log out</a></header>
+<table class="accthp_postings">
+<tr><th>status</th><th>manage</th><th>posting title</th><th>area and category</th><th>posted date</th><th>posting ID</th></tr>
+<tr class="posting-row">
+  <td class="status"><small class="gc">Active</small></td>
+  <td class="buttons">
+    <form action="https://post.craigslist.org/manage/7801234567" method="POST"><input type="hidden" name="action" value="display"><input type="hidden" name="go" value="display"><input type="submit" class="managebtn" value="display"></form>
+    <form action="https://post.craigslist.org/manage/7801234567" method="POST"><input type="hidden" name="action" value="edit"><input type="submit" class="managebtn" value="edit"></form>
+    <form action="https://post.craigslist.org/manage/7801234567" method="POST"><input type="hidden" name="action" value="renew"><input type="submit" class="managebtn" value="renew"></form>
+    <form action="https://post.craigslist.org/manage/7801234567" method="POST"><input type="hidden" name="action" value="delete"><input type="submit" class="managebtn" value="delete"></form>
+  </td>
+  <td class="title"><a href="https://raleigh.craigslist.org/tls/d/durham-dewalt-drill/7801234567.html">DeWalt drill &amp; charger</a></td>
+  <td class="areacat"><b>rdu</b> tools - by owner</td>
+  <td class="dates">2026-11-20 10:00</td>
+  <td>7801234567</td>
+</tr>
+<tr class="posting-row">
+  <td class="status"><small class="gc">Deleted</small></td>
+  <td class="buttons">
+    <form action="https://post.craigslist.org/manage/7801111111" method="POST"><input type="hidden" name="action" value="undelete"><input type="submit" class="managebtn" value="undelete"></form>
+  </td>
+  <td class="title">Old couch</td>
+  <td class="areacat"><b>rdu</b> furniture - by owner</td>
+  <td class="dates">2026-10-01 09:00</td>
+  <td>7801111111</td>
+</tr>
+</table>
+</body></html>

@@ -37,11 +37,11 @@ const schemas = {
 
 
 
-  /** lister: run create / markSold / remove for a listing in its account's browser. */
+  /** lister: run create / markSold / remove / renew for a listing in its account's browser. */
   "listing.run": z.object({
     organizationId: z.string().min(1),
     listingId: z.string().min(1),
-    action: z.enum(["create", "markSold", "remove"]),
+    action: z.enum(["create", "markSold", "remove", "renew"]),
   }),
   /** lister: POST one signed listing.status event to its callbackUrl. */
   "webhook.deliver": z.object({

@@ -96,11 +96,21 @@ export async function runListing(p: {
     // worker may load (the web app imports this package for `enqueue`).
     const { runListingAction } = await import("@repo/lister/runner");
     const r = await runListingAction(p.organizationId, p.listingId, p.action);
-    const { localScreenshots, ...outcome } = r;
+    const { localScreenshots, retryAt, ...outcome } = r;
     await enqueueDelivery(
       p.organizationId,
       await transition(p.organizationId, p.listingId, outcome),
     );
+    if (retryAt) {
+      // Held back by the account's pacing: try again then (still one attempt per run).
+      const { enqueue } = await import("./queue");
+      await enqueue(
+        "listing.run",
+        { organizationId: p.organizationId, listingId: p.listingId, action: p.action },
+        { attempts: 1, delayMs: Math.max(5_000, retryAt.getTime() - Date.now() + 5_000) },
+      );
+      return { status: r.status, heldUntil: retryAt.toISOString() };
+    }
     if (localScreenshots.length)
       console.log(`[lister] ${p.listingId} screenshots:\n  ${localScreenshots.join("\n  ")}`);
     if (r.status === "FAILED") {

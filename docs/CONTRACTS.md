@@ -1,6 +1,6 @@
 # Selling contracts — lister · communicator · garage-saler
 
-Status: v1.1, 2026-11-22 (adds tone + multi-listing awareness). Canonical copy lives in `lister/docs/CONTRACTS.md`.
+Status: v1.2, 2026-11-22 (v1.1: tone + multi-listing awareness; v1.2: lister Craigslist placement + renew, both optional/additive). Canonical copy lives in `lister/docs/CONTRACTS.md`.
 Any change to a shape here must be made in all three repos in the same change.
 
 ## The three systems
@@ -36,12 +36,18 @@ status: "NEEDS_LOGIN" | "READY" | "PAUSED", liveMode: boolean }`. A browser prof
 - `external.v1.accounts.list()` → `Account[]`
 - `external.v1.listings.create({ accountId, externalRef: {system, kind, id}, title, description,
   priceCents, category, condition: "NEW"|"USED_LIKE_NEW"|"USED_GOOD"|"USED_FAIR", location?: string,
-  photoIds: string[] (1..10, first = cover), callbackUrl })` → `{ listingId, status: "QUEUED" }`.
+  photoIds: string[] (1..10, first = cover), callbackUrl,
+  craigslist?: { area?: string, subarea?: string, category?: string } (v1.2) })` → `{ listingId, status: "QUEUED" }`.
+  `craigslist` is read only for CRAIGSLIST accounts: `area` = site code ("rdu") or the area's name,
+  `category` = Craigslist's own "for sale by owner" category ("tools"); omitted, the account's settings and
+  lister's category map (garage/Facebook category → Craigslist) decide.
   Idempotent on `(accountId, externalRef)`: a second create for the same ref returns the existing listing.
 - `external.v1.listings.get({ listingId })` → `Listing`
 - `external.v1.listings.list({ externalRef? , status? })` → `Listing[]`
 - `external.v1.listings.markSold({ listingId })` → `{ status: "QUEUED" }`
 - `external.v1.listings.remove({ listingId })` → `{ status: "QUEUED" }`
+- `external.v1.listings.renew({ listingId })` → `{ status: "QUEUED" }` (v1.2; Craigslist, LIVE only, at most every 48h
+  per account settings; on a Facebook listing nothing is done: status unchanged, the reason in `lastError`)
 - `external.v1.listings.retry({ listingId })`
 
 `Listing`: `{ id, accountId, platform, externalRef, title, priceCents, status:

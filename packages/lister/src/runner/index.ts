@@ -9,6 +9,8 @@ import { env } from "@repo/env";
 
 import type { ListingAction, Outcome } from "../service";
 import { materializePhotos, StepRecorder } from "./browser";
+import { craigslistAdapter } from "./craigslist";
+import { craigslistSettings, pacingDecision, pacingSchema, type Pacing } from "../craigslist-plan";
 import { facebookAdapter } from "./facebook";
 import { fakeAdapter } from "./fake";
 import { NeedsHumanError, type PlatformAdapter, type RunAccount, type SessionCheck } from "./types";
@@ -16,11 +18,13 @@ import { NeedsHumanError, type PlatformAdapter, type RunAccount, type SessionChe
 export { guardClick, findMoneyStep } from "./guard";
 export { launchAccount, profileDir, profilesRoot, REPO_ROOT } from "./browser";
 export * from "./facebook-selling";
+
 export type { RunAccount } from "./types";
 
 export function adapterFor(platform: string): PlatformAdapter {
   if (env().LISTER_BROWSER_DRIVER === "fake") return fakeAdapter;
   if (platform === "FACEBOOK") return facebookAdapter;
+  if (platform === "CRAIGSLIST") return craigslistAdapter;
   throw new Error(`platform ${platform} is not supported yet`);
 }
 
@@ -32,6 +36,7 @@ const accountSelect = {
   profileName: true,
   liveMode: true,
   status: true,
+  settings: true,
 } as const;
 
 function firstLine(err: unknown): string {
@@ -41,6 +46,15 @@ function firstLine(err: unknown): string {
 
 export interface RunReport extends Outcome {
   localScreenshots: string[];
+  /** Pacing held a live create back: run it again at this time. */
+  retryAt?: Date;
+}
+
+/** The account's pacing: Craigslist always (defaults 1/h, 6/day); others only when set. */
+export function pacingFor(platform: string, settings: unknown): Pacing | null {
+  if (platform === "CRAIGSLIST") return craigslistSettings(settings).pacing;
+  const raw = (settings as { pacing?: unknown } | null)?.pacing;
+  return raw ? pacingSchema.parse(raw) : null;
 }
 
 /** Run `action` for a listing. Never throws for a platform failure: it returns FAILED. */
@@ -61,6 +75,9 @@ export async function runListingAction(
       category: true,
       condition: true,
       location: true,
+      platformOptions: true,
+      postedAt: true,
+      renewedAt: true,
       photoIds: true,
       status: true,
       platformListingId: true,
@@ -72,6 +89,9 @@ export async function runListingAction(
   const account: RunAccount = listing.account;
   const rec = new StepRecorder(organizationId, listingId, log);
 
+  if (action === "renew" && !listing.platformListingId) {
+    return { status: listing.status as Outcome["status"], lastError: "never published; nothing to renew", done: true, localScreenshots: [] };
+  }
   // Never published on the platform: sold / removed is only our record.
   if (action !== "create" && !listing.platformListingId) {
     return {
@@ -83,6 +103,33 @@ export async function runListingAction(
   }
   if (listing.account.status === "PAUSED") {
     return { status: "FAILED", lastError: "account is PAUSED", done: false, localScreenshots: [] };
+  }
+
+  if (action === "create" && account.liveMode && env().LISTER_BROWSER_DRIVER !== "fake") {
+    let pacing: Pacing | null;
+    try {
+      pacing = pacingFor(account.platform, account.settings);
+    } catch (err) {
+      return { status: "FAILED", lastError: firstLine(err), done: true, localScreenshots: [] };
+    }
+    if (pacing) {
+      const since = new Date(Date.now() - 24 * 3600_000);
+      const posted = await db.listing.findMany({
+        where: { organizationId, accountId: account.id, postedAt: { gte: since }, id: { not: listingId } },
+        select: { postedAt: true },
+      });
+      const d = pacingDecision(new Date(), posted.map((p) => p.postedAt!), pacing);
+      if (!d.ok) {
+        log(`[runner] ${listingId} held back: ${d.reason}; next try ${d.notBefore.toISOString()}`);
+        return {
+          status: "QUEUED",
+          lastError: `${d.reason}; will post at ${d.notBefore.toISOString()}`,
+          done: false,
+          localScreenshots: [],
+          retryAt: d.notBefore,
+        };
+      }
+    }
   }
 
   const adapter = adapterFor(account.platform);
@@ -101,6 +148,8 @@ export async function runListingAction(
       ...(r.platformListingId !== undefined ? { platformListingId: r.platformListingId } : {}),
       ...(r.url !== undefined ? { url: r.url } : {}),
       lastError: r.lastError ?? null,
+      ...(r.postedAt ? { postedAt: r.postedAt } : {}),
+      ...(r.renewedAt ? { renewedAt: r.renewedAt } : {}),
       screenshotKeys: rec.keys,
       done: true,
       localScreenshots: rec.localPaths,
@@ -150,5 +199,11 @@ export async function checkAccount(
     r = { ok: false, reason: `session check failed: ${firstLine(err)}` };
   }
   await setAccountStatus(account.id, r.ok ? "READY" : "NEEDS_LOGIN", r.ok ? null : (r.reason ?? null));
+  // A Craigslist account created before login has a placeholder id: record the email it logged in as.
+  if (r.ok && r.identity && account.platform === "CRAIGSLIST" && !account.externalAccountId.includes("@")) {
+    await db.sellerAccount
+      .updateMany({ where: { id: account.id, organizationId }, data: { externalAccountId: r.identity } })
+      .catch(() => undefined);
+  }
   return r;
 }

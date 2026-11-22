@@ -54,6 +54,19 @@ export const createListingInput = z.object({
   location: z.string().trim().max(200).optional(),
   photoIds: z.array(z.string().min(1)).min(1).max(10),
   callbackUrl: z.string().url().max(2000),
+  /**
+   * v1.2, optional: Craigslist placement. `area` is the site (e.g. "rdu" or
+   * "raleigh / durham / CH"), `subarea` where the site has them, `category`
+   * Craigslist's own "for sale by owner" category name (e.g. "tools"). Left
+   * out, the account's settings and the category map decide.
+   */
+  craigslist: z
+    .object({
+      area: z.string().trim().min(1).max(100).optional(),
+      subarea: z.string().trim().min(1).max(100).optional(),
+      category: z.string().trim().min(1).max(100).optional(),
+    })
+    .optional(),
 });
 export type CreateListingInput = z.infer<typeof createListingInput>;
 

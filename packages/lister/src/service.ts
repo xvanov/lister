@@ -20,7 +20,7 @@ import {
   type ListingStatusEvent,
 } from "./contract";
 
-export type ListingAction = "create" | "markSold" | "remove";
+export type ListingAction = "create" | "markSold" | "remove" | "renew";
 
 export class ListerError extends Error {
   constructor(
@@ -181,6 +181,7 @@ export async function createListing(
           category: input.category,
           condition: input.condition,
           location: input.location ?? null,
+          ...(input.craigslist ? { platformOptions: input.craigslist } : {}),
           photoIds: input.photoIds,
           callbackUrl: input.callbackUrl,
           apiClientName,
@@ -242,6 +243,12 @@ export async function requestAction(
     }
     next = (row.pendingAction as ListingAction | null) ?? "create";
   } else {
+    if (action === "renew" && row.status !== "LIVE") {
+      throw new ListerError(
+        `Only a LIVE listing can be renewed (this one is ${row.status}).`,
+        "CONFLICT",
+      );
+    }
     if (action === "markSold" && row.status === "SOLD") return { action };
     if (action === "remove" && row.status === "REMOVED") return { action };
     next = action;
@@ -262,6 +269,8 @@ export interface Outcome {
   url?: string | null;
   lastError?: string | null;
   screenshotKeys?: string[];
+  postedAt?: Date;
+  renewedAt?: Date;
   /** Clear pendingAction (the action is finished, ok or not for good). */
   done?: boolean;
 }
@@ -285,6 +294,8 @@ export async function transition(
         ...(o.screenshotKeys !== undefined
           ? { screenshotKeys: o.screenshotKeys }
           : {}),
+        ...(o.postedAt ? { postedAt: o.postedAt } : {}),
+        ...(o.renewedAt ? { renewedAt: o.renewedAt } : {}),
         ...(o.done ? { pendingAction: null } : {}),
       },
     });

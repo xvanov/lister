@@ -6,6 +6,7 @@ import { z } from "zod";
 import { enqueue } from "@repo/jobs";
 import {
   appUrl,
+  craigslistSettingsSchema,
   generateApiKey,
   hashKey,
   listingSelect,
@@ -16,7 +17,9 @@ import {
   type ListingRow,
 } from "@repo/lister";
 
-import { NotFoundError } from "../errors";
+import { Prisma } from "@repo/db";
+
+import { DomainRuleError, NotFoundError } from "../errors";
 import { createTRPCRouter, orgProcedure, adminOnlyProcedure } from "../trpc";
 import { queueAction } from "./external";
 
@@ -37,6 +40,7 @@ export const listerRouter = createTRPCRouter({
         headless: true,
         lastError: true,
         lastCheckedAt: true,
+        settings: true,
       },
     }),
   ),
@@ -58,19 +62,44 @@ export const listerRouter = createTRPCRouter({
       return row;
     }),
 
-  /** liveMode, headless, pause. Turning liveMode ON means Publish gets clicked. */
+  /**
+   * label, settings, liveMode, headless, pause. Turning liveMode ON means
+   * Publish gets clicked. `settings` (JSON) is validated per platform
+   * (Craigslist: contactEmail, area, subarea, city, postal, chat, phone, pacing).
+   */
   updateAccount: adminOnlyProcedure("change seller accounts")
     .input(
       accountId.extend({
+        label: z.string().trim().min(1).max(100).optional(),
+        settings: z.record(z.string(), z.unknown()).nullable().optional(),
         liveMode: z.boolean().optional(),
         headless: z.boolean().optional(),
         paused: z.boolean().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      let settings: object | null | undefined = input.settings;
+      if (input.settings) {
+        const acct = await ctx.db.sellerAccount.findFirst({
+          where: { id: input.accountId, organizationId: ctx.organizationId },
+          select: { platform: true },
+        });
+        if (!acct) throw new NotFoundError("Account not found.");
+        if (acct.platform === "CRAIGSLIST") {
+          const r = craigslistSettingsSchema.safeParse(input.settings);
+          if (!r.success)
+            throw new DomainRuleError(
+              `Invalid Craigslist settings: ${r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+            );
+          // Store only what was given; defaults apply at run time.
+          settings = input.settings;
+        }
+      }
       const { count } = await ctx.db.sellerAccount.updateMany({
         where: { id: input.accountId, organizationId: ctx.organizationId },
         data: {
+          ...(input.label !== undefined ? { label: input.label } : {}),
+          ...(settings !== undefined ? { settings: settings === null ? Prisma.DbNull : settings } : {}),
           ...(input.liveMode !== undefined ? { liveMode: input.liveMode } : {}),
           ...(input.headless !== undefined ? { headless: input.headless } : {}),
           ...(input.paused !== undefined
@@ -82,6 +111,8 @@ export const listerRouter = createTRPCRouter({
       await ctx.audit("seller_account.update", {
         targetId: input.accountId,
         metadata: {
+          label: input.label ?? null,
+          settingsChanged: input.settings !== undefined,
           liveMode: input.liveMode ?? null,
           headless: input.headless ?? null,
           paused: input.paused ?? null,
@@ -175,7 +206,7 @@ export const listerRouter = createTRPCRouter({
     .input(
       z.object({
         listingId: z.string().min(1),
-        action: z.enum(["markSold", "remove", "retry"]),
+        action: z.enum(["markSold", "remove", "renew", "retry"]),
       }),
     )
     .mutation(async ({ ctx, input }) => {

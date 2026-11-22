@@ -33,6 +33,7 @@ export const fakeAdapter: PlatformAdapter = {
       platformListingId: id,
       url: `https://www.facebook.com/marketplace/item/${id}/`,
       lastError: null,
+      postedAt: new Date(),
     };
   },
   async markSold(ctx) {
@@ -44,6 +45,11 @@ export const fakeAdapter: PlatformAdapter = {
     await steps(ctx, ["remove"]);
     if (!ctx.account.liveMode) return { status: "LIVE", lastError: "dry run: stopped before deleting" };
     return { status: "REMOVED", lastError: null };
+  },
+  async renew(ctx) {
+    await steps(ctx, ["renew"]);
+    if (!ctx.account.liveMode) return { status: "LIVE", lastError: "dry run: stopped before renewing" };
+    return { status: "LIVE", lastError: null, renewedAt: new Date() };
   },
   async checkSession() {
     return { ok: true };

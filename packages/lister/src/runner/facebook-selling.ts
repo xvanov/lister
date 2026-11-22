@@ -113,21 +113,89 @@ export function itemUrl(id: string): string {
 }
 
 /**
- * The id of the listing we just published: an active listing with exactly our
- * title that was not on the page before we published. Null when that is not
- * exactly one listing (never guess).
+ * FALLBACK read-back after publish (the primary source is
+ * `listingIdFromPublish`): an active listing with exactly our title AND price
+ * that was not on the page before we published. With several such listings
+ * (duplicate titles), the newest one wins, but only when the JSON carries a
+ * creation time for every candidate, the newest is strictly newer than the
+ * rest, and it was created after `since` (unix seconds, minus slack). Null
+ * otherwise: never guess.
  */
 export function findNewListingId(
   after: FbListing[],
   title: string,
   beforeIds: Set<string>,
+  opts: { priceCents?: number; since?: number } = {},
 ): string | null {
-  const t = title.trim();
-  const fresh = after.filter(
-    (l) => l.title.trim() === t && l.status !== "sold" && !beforeIds.has(l.id),
+  const t = norm(title);
+  let fresh = after.filter(
+    (l) => norm(l.title) === t && l.status !== "sold" && !beforeIds.has(l.id),
   );
+  if (opts.priceCents !== undefined) {
+    const want = fbPrice(opts.priceCents);
+    fresh = fresh.filter((l) => !l.price || priceDigits(l.price) === want);
+  }
   if (fresh.length === 1) return fresh[0]!.id;
-  return null;
+  if (fresh.length === 0 || fresh.some((l) => l.createdAt === undefined)) return null;
+  const sorted = [...fresh].sort((a, b) => b.createdAt! - a.createdAt!);
+  const [newest, next] = sorted;
+  if (newest!.createdAt === next!.createdAt) return null;
+  if (opts.since !== undefined && newest!.createdAt! < opts.since - 120) return null;
+  return newest!.id;
+}
+
+const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+
+/** "$1,200" / "US$1,200" / "$5" → "1200" / "5"; "Free" → "0". */
+export function priceDigits(text: string): string {
+  if (/^\s*free\s*$/i.test(text)) return "0";
+  const m = /(\d[\d,]*)(?:\.(\d{2}))?/.exec(text);
+  return m ? m[1]!.replace(/,/g, "") : "";
+}
+
+/**
+ * PRIMARY: the new listing's id from Facebook's own response to Publish.
+ * The create mutation's response carries the listing under a key such as
+ * `marketplace_listing_create` / `..._composer_create` → `listing` (typename
+ * GroupCommerceProductItem / MarketplaceListing). Only objects INSIDE a
+ * create/publish key that look like a listing count (a listing key, a listing
+ * typename, or a `marketplace_listing_title`), so the actor's user id, story
+ * ids and tracking ids are never taken. Null unless exactly one id is found.
+ */
+export function listingIdFromPublish(values: unknown[], excludeIds: string[] = []): string | null {
+  const found = new Set<string>();
+  const exclude = new Set(excludeIds);
+  const seen = new Set<unknown>();
+  const looksLikeListing = (o: Obj, key: string) =>
+    typeof o.id === "string" &&
+    /^\d{6,20}$/.test(o.id) &&
+    (/^(listing|marketplace_listing|product_item|created_listing)$/i.test(key) ||
+      (typeof o.__typename === "string" && /listing|productitem/i.test(o.__typename)) ||
+      typeof o.marketplace_listing_title === "string");
+  const visit = (v: unknown, key: string, inside: boolean, depth: number) => {
+    if (depth > 60 || v === null || typeof v !== "object" || seen.has(v)) return;
+    seen.add(v);
+    if (Array.isArray(v)) {
+      for (const x of v) visit(x, key, inside, depth + 1);
+      return;
+    }
+    const o = v as Obj;
+    if (inside && looksLikeListing(o, key) && !exclude.has(o.id as string)) found.add(o.id as string);
+    for (const k of Object.keys(o)) {
+      const enter = inside || /(marketplace|commerce|listing|composer).*(create|publish)|(create|publish).*(listing|marketplace|commerce)/i.test(k);
+      visit(o[k], k, enter, depth + 1);
+    }
+  };
+  for (const v of values) visit(v, "", false, 0);
+  return found.size === 1 ? [...found][0]! : null;
+}
+
+/** A listing id in a URL Facebook navigated to after Publish (item page or ?listing_id=). */
+export function listingIdFromUrl(url: string): string | null {
+  const m =
+    /\/marketplace\/item\/(\d{6,20})/.exec(url) ??
+    /[?&](?:listing_id|listingID|product_id)=(\d{6,20})/.exec(url);
+  return m ? m[1]! : null;
 }
 
 export type FbDecision =
@@ -167,7 +235,10 @@ export function stopFromUrl(url: string, title = ""): string | null {
 const BODY_STOPS: Array<[RegExp, string]> = [
   [/enter the code|two-factor authentication|approve from another device/i, "two-factor prompt"],
   [/captcha|are you a (human|robot)/i, "bot check / captcha"],
-  [/\blimit reached\b/i, "Facebook says: Limit reached (posting limit)"],
+  [
+    /\blimit reached\b|you've reached your (daily )?(listing|posting) limit|reached the limit for/i,
+    "Facebook says: Limit reached (posting limit for this account; wait a day before retrying)",
+  ],
   [/you can't (sell|post) on marketplace|access to marketplace (is )?(restricted|denied)/i, "Marketplace access restricted"],
 ];
 

@@ -6,8 +6,8 @@ is specific to lister.
 
 ## What this is
 
-A service other apps call to **post items for sale on Facebook Marketplace**
-(Craigslist next), **mark them sold** and **remove** them, by driving a
+A service other apps call to **post items for sale on Facebook Marketplace and
+Craigslist** (for sale by owner; docs/craigslist.md), **mark them sold** and **remove** them, by driving a
 logged-in Chromium profile per seller account. Multi-tenant (every row is
 org-scoped) and multi-account. It knows nothing about buyer conversations
 (that is communicator). The API contract shared with garage-saler and
@@ -16,13 +16,15 @@ without changing all three repos.
 
 ```
 packages/lister        contract shapes, API keys, webhook signing, listing state (web-safe)
+packages/lister/src/craigslist-plan.ts  Craigslist settings, category map, pacing, page parsing (pure)
 packages/lister/src/runner   Playwright side, WORKER ONLY: profiles, click guard,
-                       Facebook adapter, fake adapter, screenshots
+                       Facebook + Craigslist adapters, fake adapter, screenshots
 packages/api/src/routers/external.ts   external.v1 (API-key callers)
 packages/api/src/routers/lister.ts     the operator console's API (/app/lister)
 packages/jobs/src/lister.ts            listing.run, webhook.deliver, account.check
 apps/web/src/app/api/v1/photos         multipart photo upload (Bearer)
-apps/worker/src/cli/account.ts         npm run account:{list,login,check,live,headless}
+apps/worker/src/cli/account.ts         npm run account:{list,login,check,live,headless,settings}
+apps/worker/src/cli/listing-run.ts     npm run listing:run -- <listingId> <action> (foreground, same lock)
 apps/worker/src/cli/fb-probe.ts        dev: dump the create form's controls
 ```
 

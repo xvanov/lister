@@ -9,6 +9,10 @@
  *     walks the form and stops before that click.
  *   - On a live run the publishing labels are allowed only when the adapter
  *     names them explicitly as the action's final step (`finalStep`).
+ *   - `opensConfirm`: a dry run may click a publishing-sounding label the
+ *     adapter declares only OPENS a confirmation (Facebook's "Delete listing"
+ *     menu item → "Delete listing?" dialog). The confirm button itself is
+ *     still refused on a dry run.
  */
 
 const ALWAYS_REFUSED =
@@ -23,7 +27,7 @@ export interface ClickVerdict {
 
 export function guardClick(
   label: string,
-  opts: { live: boolean; finalStep?: RegExp },
+  opts: { live: boolean; finalStep?: RegExp; opensConfirm?: RegExp },
 ): ClickVerdict {
   const text = (label ?? "").trim();
   if (!text) return { allowed: false, reason: "refusing to click an unlabelled control" };
@@ -32,6 +36,8 @@ export function guardClick(
   }
   if (LIVE_ONLY.test(text)) {
     if (!opts.live) {
+      if (opts.opensConfirm?.test(text))
+        return { allowed: true, reason: "dry run: opens a confirmation only" };
       return { allowed: false, reason: `dry run: "${text}" is not clicked` };
     }
     if (!opts.finalStep || !opts.finalStep.test(text)) {
