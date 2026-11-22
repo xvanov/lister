@@ -97,7 +97,7 @@ test("an API client posts a listing: dry run reaches DRY_RUN_OK and a signed web
     await page.getByLabel("Facebook user id").fill("100000000000001");
     await page.getByRole("button", { name: "Add Facebook account" }).click();
     await expect(page.getByText("Smoke FB")).toBeVisible();
-    await expect(page.getByText("dry run")).toBeVisible();
+    await expect(page.getByText("dry run", { exact: true })).toBeVisible();
 
     // An API key, shown once.
     await page.getByLabel("API key name").fill("smoke-app");

@@ -196,7 +196,8 @@ SMOKE_WEBHOOK_SECRET="smoke-webhook-$(openssl rand -hex 16)"
 # lister: webhooks are signed with a per-run secret the suite verifies; the
 # dev .env's API clients (which name a dev org) do not apply; the worker uses
 # the simulated adapter, so the gate never opens a real marketplace.
-export LISTER_WEBHOOK_SECRET="smoke-lister-$(openssl rand -hex 16)"
+LISTER_WEBHOOK_SECRET="smoke-lister-$(openssl rand -hex 16)"
+export LISTER_WEBHOOK_SECRET
 export LISTER_API_CLIENTS="" LISTER_BROWSER_DRIVER=fake
 
 echo "→ booting the built app on :${PORT}"
