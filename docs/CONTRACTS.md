@@ -1,6 +1,6 @@
 # Selling contracts — lister · communicator · garage-saler
 
-Status: v1, 2026-11-22. Canonical copy lives in `lister/docs/CONTRACTS.md`.
+Status: v1.1, 2026-11-22 (adds tone + multi-listing awareness). Canonical copy lives in `lister/docs/CONTRACTS.md`.
 Any change to a shape here must be made in all three repos in the same change.
 
 ## The three systems
@@ -61,12 +61,26 @@ Webhook to `callbackUrl` on every status change, `X-Event-Type: listing.status`,
             address?: string (private, revealed only when a pickup is booked),
             windows: [{ weekday: 0-6, start: "HH:MM", end: "HH:MM" }], timezone: "America/New_York" },
   autonomy: "DRAFT_ONLY" | "AUTO_WITHIN_RULES" | "FULL_AUTO",
+  tone?: "CASUAL" | "PROFESSIONAL" (default CASUAL),
   callbackUrl, status: "ACTIVE" | "SOLD" | "PAUSED" })` → `{ contextId }`. Idempotent on externalRef.
+- `external.v2.listings.setTone({ externalRef, tone })` (v1.1, 2026-11-22)
 - `external.v2.listings.get({ externalRef })` → context + linked threads summary
 - `external.v2.threads.list({ externalRef })` → `[{ threadId, buyerName, lastMessageAt, state, offerCents?, pickupAt? }]`
 - `external.v2.threads.read({ threadId })` → messages (in/out, text, at) + pending drafts
 - `external.v2.drafts.approve({ draftId, editedBody? })` / `external.v2.drafts.reject({ draftId })`
 - `external.v2.listings.setAutonomy({ externalRef, autonomy })`
+
+Tone (v1.1): `CASUAL` = writes like a person texting from a phone: mostly lowercase (acronyms and
+proper nouns like PPE, iPhone, DeWalt keep their caps), loose punctuation, short, contractions, the
+occasional harmless typo; never sloppy about facts (price, times, address are always exact).
+`PROFESSIONAL` = clean, friendly, properly capitalized and punctuated. Tone never changes what the
+seller commits to, only how it reads.
+
+Multi-listing awareness (v1.1): every reply is routed to the exact conversation (Matrix room) it answers,
+never by buyer address. The seller brain sees ALL of the org's ACTIVE listings (title, ask, facts — never
+other floors), so a buyer who asks about another item in the same chat gets a correct answer, and a buyer
+negotiating several items in one chat can be handled (bundle offers are judged per item against each floor).
+Threads may link to more than one listing; `threads.list` for a listing returns every thread that mentions it.
 
 Autonomy semantics (enforced inside communicator, through the existing PendingAction + guard path — never
 by bypassing it):
