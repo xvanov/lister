@@ -193,6 +193,11 @@ cp -r apps/web/.next/static "${STANDALONE}/.next/static"
 # they refuse callers without them, and accept the server's own.
 SMOKE_CRON_SECRET="smoke-cron-$(openssl rand -hex 16)"
 SMOKE_WEBHOOK_SECRET="smoke-webhook-$(openssl rand -hex 16)"
+# lister: webhooks are signed with a per-run secret the suite verifies; the
+# dev .env's API clients (which name a dev org) do not apply; the worker uses
+# the simulated adapter, so the gate never opens a real marketplace.
+export LISTER_WEBHOOK_SECRET="smoke-lister-$(openssl rand -hex 16)"
+export LISTER_API_CLIENTS="" LISTER_BROWSER_DRIVER=fake
 
 echo "→ booting the built app on :${PORT}"
 # Run the standalone server directly: that is the artifact the container runs,
@@ -273,6 +278,7 @@ echo "→ driving the user journey"
 # cause and must not be reported as a mere test failure.
 BASE_URL="$BASE_URL" MAILPIT_URL="http://127.0.0.1:${TEST_MAIL_UI_PORT}" \
 E2E_CRON_SECRET="$SMOKE_CRON_SECRET" E2E_EMAIL_WEBHOOK_SECRET="$SMOKE_WEBHOOK_SECRET" \
+E2E_LISTER_WEBHOOK_SECRET="$LISTER_WEBHOOK_SECRET" \
   npm run test:e2e --workspace web || {
   alive_or_die "$WORKER_PID" worker "during the journey"
   alive_or_die "$SERVER_PID" server "during the journey"

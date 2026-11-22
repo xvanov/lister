@@ -8,6 +8,7 @@
 import {
   LayoutDashboard,
   LogOut,
+  Store,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -45,6 +46,7 @@ import { trpc } from "@/lib/trpc";
 
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/lister", label: "Lister", icon: Store },
 ];
 
 function initials(name: string, email: string): string {

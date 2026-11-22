@@ -47,3 +47,6 @@ logs/
 !.vscode/extensions.json
 
 
+
+# lister: browser profiles (logged-in sessions!) and run artifacts
+/data/

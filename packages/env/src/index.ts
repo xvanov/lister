@@ -321,6 +321,28 @@ const serverSchema = z.object({
   SECRETS_ENCRYPTION_KEY: z.preprocess(blankIsUnset, base64Key.optional()),
   SECRETS_ENCRYPTION_OLD_KEYS: z.string().optional(),
 
+  // ── lister ─────────────────────────────────────────────────────────────
+  /**
+   * API keys of the apps that call lister, as JSON (keep the value in single
+   * quotes in .env):
+   *   [{"name":"garage-saler","key":"<secret>","org":"<org slug>",
+   *     "scopes":["accounts:read","listings:read","listings:write"],
+   *     "webhookSecret":"<optional; else LISTER_WEBHOOK_SECRET>"}]
+   * Keys created in the UI live (hashed) in the api_client table instead.
+   */
+  LISTER_API_CLIENTS: z.preprocess(blankIsUnset, z.string().optional()),
+  /** HMAC-SHA256 secret that signs every webhook (X-Signature: sha256=<hex>). */
+  LISTER_WEBHOOK_SECRET: z.preprocess(blankIsUnset, z.string().optional()),
+  /** Where per-account browser profiles live. Relative = to the repo root. */
+  LISTER_PROFILES_DIR: z.preprocess(blankIsUnset, z.string().optional()),
+  /** playwright = drive a real browser; fake = simulated adapter (the smoke gate). */
+  LISTER_BROWSER_DRIVER: z.preprocess(
+    blankIsUnset,
+    z.enum(["playwright", "fake"]).default("playwright"),
+  ),
+  /** X display for headed accounts (e.g. ":0"). Unset = inherit DISPLAY. */
+  LISTER_DISPLAY: z.preprocess(blankIsUnset, z.string().optional()),
+
   // Storage
   STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
   STORAGE_LOCAL_DIR: z.string().default("./storage"),

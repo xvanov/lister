@@ -112,6 +112,10 @@ model Organization {
   auditEvents   AuditEvent[]
   outbound      OutboundMessage[]
   suppressed    OutboundSuppression[]
+  sellerAccounts   SellerAccount[]
+  listings         Listing[]
+  apiClients       ApiClient[]
+  webhookDeliveries WebhookDelivery[]
 
   @@map("organization")
 }
@@ -374,3 +378,137 @@ model AppSetting {
 
 // ─────────────────────── AGENTS, PROPOSALS, API KEYS ─────────────────────
 
+
+// ─── lister ──────────────────────────────────────────────────────────────
+// A seller account on a marketplace (contract: `Account`). Named SellerAccount
+// because better-auth owns the `Account` model (login providers).
+
+enum Platform {
+  FACEBOOK
+  CRAIGSLIST
+}
+
+enum SellerAccountStatus {
+  NEEDS_LOGIN
+  READY
+  PAUSED
+}
+
+enum ListingStatus {
+  QUEUED
+  POSTING
+  LIVE
+  DRY_RUN_OK
+  FAILED
+  SOLD
+  REMOVED
+}
+
+model SellerAccount {
+  id                String              @id @default(cuid())
+  organizationId    String
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  platform          Platform
+  label             String
+  /// The platform's user id (Facebook: the numeric Meta user id).
+  externalAccountId String
+  status            SellerAccountStatus @default(NEEDS_LOGIN)
+  /// false = dry run: walk the whole form, screenshot, never press Publish.
+  liveMode          Boolean             @default(false)
+  /// Run the browser headless. Facebook may behave differently headless.
+  headless          Boolean             @default(true)
+  /// Browser profile directory name under LISTER_PROFILES_DIR (defaults to the id).
+  profileName       String?
+  lastCheckedAt     DateTime?
+  lastError         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  listings Listing[]
+
+  @@unique([organizationId, platform, externalAccountId])
+  @@index([organizationId, createdAt])
+  @@map("seller_account")
+}
+
+model Listing {
+  id                String        @id @default(cuid())
+  organizationId    String
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  accountId         String
+  account           SellerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  platform          Platform
+  refSystem         String
+  refKind           String
+  refId             String
+  title             String
+  description       String
+  priceCents        Int
+  category          String
+  condition         String
+  location          String?
+  /// media_asset ids, in posting order (first = cover).
+  photoIds          String[]
+  callbackUrl       String?
+  /// Which API client created it (its webhook secret signs the callbacks).
+  apiClientName     String?
+  status            ListingStatus @default(QUEUED)
+  /// The last action requested: create | markSold | remove.
+  pendingAction     String?
+  platformListingId String?
+  url               String?
+  lastError         String?
+  /// media_asset keys of the screenshots of the latest run, in step order.
+  screenshotKeys    String[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@unique([accountId, refSystem, refKind, refId])
+  @@index([organizationId, updatedAt])
+  @@index([organizationId, refSystem, refKind, refId])
+  @@map("listing")
+}
+
+/// An API key a calling app uses (Bearer). Keys from LISTER_API_CLIENTS in
+/// .env need no row; these are the ones created in the UI. Only a hash is kept.
+model ApiClient {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  keyHash        String       @unique
+  /// First characters of the key, to recognise it in a list.
+  keyPrefix      String
+  scopes         String[]
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("api_client")
+}
+
+/// One webhook event to a callbackUrl; every attempt is counted here.
+model WebhookDelivery {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  listingId      String
+  listing        Listing      @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  eventId        String       @unique
+  eventType      String
+  url            String
+  body           String
+  /// pending | delivered | failed
+  status         String       @default("pending")
+  attempts       Int          @default(0)
+  responseStatus Int?
+  lastError      String?
+  deliveredAt    DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("webhook_delivery")
+}

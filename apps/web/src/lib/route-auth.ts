@@ -11,13 +11,21 @@
 import { resolveOrganizationId } from "@repo/api";
 import { auth } from "@repo/auth";
 import { db } from "@repo/db";
+import { resolveBearer } from "@repo/lister";
 
 export type RouteTenant =
-  | { ok: true; userId: string; organizationId: string }
+  /** userId is null for an API-key caller. */
+  | { ok: true; userId: string | null; organizationId: string }
   /** 401 = not signed in; 403 = signed in, but a member of no organization. */
   | { ok: false; status: 401 | 403 };
 
 export async function requireTenant(req: Request): Promise<RouteTenant> {
+  // A calling app's API key (lister's external API): the tenant is the key's.
+  if (/^Bearer\s/i.test(req.headers.get("authorization") ?? "")) {
+    const caller = await resolveBearer(req.headers);
+    if (!caller) return { ok: false, status: 401 };
+    return { ok: true, userId: null, organizationId: caller.organizationId };
+  }
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session?.user) return { ok: false, status: 401 };
   const organizationId = await resolveOrganizationId(db, session);

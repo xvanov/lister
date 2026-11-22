@@ -38,7 +38,13 @@
     "auth:schema": "npm run schema -w @repo/auth",
     "outbound:freeze": "npm run freeze -w @repo/outbound --",
     "postinstall": "npm run db:generate",
-    "inbox": "echo 'Local mail inbox: http://localhost:8097'"
+    "inbox": "echo 'Local mail inbox: http://localhost:8097'",
+    "lister:seed": "node --import tsx apps/worker/src/cli/seed-lister.ts",
+    "account:login": "node --import tsx apps/worker/src/cli/account.ts login",
+    "account:check": "node --import tsx apps/worker/src/cli/account.ts check",
+    "account:live": "node --import tsx apps/worker/src/cli/account.ts live",
+    "account:headless": "node --import tsx apps/worker/src/cli/account.ts headless",
+    "account:list": "node --import tsx apps/worker/src/cli/account.ts list"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

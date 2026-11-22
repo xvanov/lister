@@ -16,6 +16,13 @@ import { z } from "zod";
 import { db } from "@repo/db";
 import { runOperatorTick } from "@repo/notify";
 
+import {
+  checkAccountJob,
+  deliverWebhook,
+  runListing,
+  webhookGaveUp,
+} from "./lister";
+
 
 const schemas = {
   /** Demo job: summarise a tenant's open items with the LLM. */
@@ -29,6 +36,23 @@ const schemas = {
 
 
 
+
+  /** lister: run create / markSold / remove for a listing in its account's browser. */
+  "listing.run": z.object({
+    organizationId: z.string().min(1),
+    listingId: z.string().min(1),
+    action: z.enum(["create", "markSold", "remove"]),
+  }),
+  /** lister: POST one signed listing.status event to its callbackUrl. */
+  "webhook.deliver": z.object({
+    organizationId: z.string().min(1),
+    deliveryId: z.string().min(1),
+  }),
+  /** lister: open an account's profile and set READY / NEEDS_LOGIN. */
+  "account.check": z.object({
+    organizationId: z.string().min(1),
+    accountId: z.string().min(1),
+  }),
 
   /** Demo scheduled job: prune soft state and log a heartbeat. */
   "maintenance.nightly": z.object({}),
@@ -97,6 +121,23 @@ export const handlers: { [N in JobName]: JobEntry<(typeof schemas)[N]> } = {
 
 
 
+
+  "listing.run": {
+    scope: "org",
+    schema: schemas["listing.run"],
+    run: runListing,
+  },
+  "webhook.deliver": {
+    scope: "org",
+    schema: schemas["webhook.deliver"],
+    run: deliverWebhook,
+    onFinalFailure: webhookGaveUp,
+  },
+  "account.check": {
+    scope: "org",
+    schema: schemas["account.check"],
+    run: checkAccountJob,
+  },
 
   "maintenance.nightly": {
     scope: "system",

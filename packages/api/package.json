@@ -21,6 +21,7 @@
     "@repo/domain": "*",
     "@repo/env": "*",
     "@repo/jobs": "*",
+    "@repo/lister": "*",
     "@repo/outbound": "*",
     "@repo/security": "*",
     "@repo/storage": "*",

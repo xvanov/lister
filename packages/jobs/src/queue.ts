@@ -67,12 +67,22 @@ export const queue: Queue = new Proxy({} as Queue, {
 export async function enqueue<N extends JobName>(
   name: N,
   payload: JobPayloads[N],
-  opts?: { delayMs?: number; jobId?: string; priority?: number },
+  opts?: {
+    delayMs?: number;
+    jobId?: string;
+    priority?: number;
+    attempts?: number;
+    backoffMs?: number;
+  },
 ): Promise<string> {
   const job = await queue.add(name, payload, {
     delay: opts?.delayMs,
     jobId: opts?.jobId,
     priority: opts?.priority,
+    ...(opts?.attempts !== undefined ? { attempts: opts.attempts } : {}),
+    ...(opts?.backoffMs !== undefined
+      ? { backoff: { type: "exponential", delay: opts.backoffMs } }
+      : {}),
   });
   return job.id ?? "";
 }

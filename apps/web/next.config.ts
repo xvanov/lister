@@ -15,6 +15,7 @@ const nextConfig: NextConfig = {
     "@repo/email",
     "@repo/env",
     "@repo/jobs",
+    "@repo/lister",
     "@repo/notify",
     "@repo/outbound",
     "@repo/security",
@@ -27,7 +28,15 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(import.meta.dirname, "../.."),
 
   // Native / server-only packages must not be bundled.
-  serverExternalPackages: ["@prisma/adapter-pg", "pg", "bullmq", "ioredis"],
+  serverExternalPackages: [
+    "@prisma/adapter-pg",
+    "pg",
+    "bullmq",
+    "ioredis",
+    // lister's browser runner: only the worker loads it, never bundle it.
+    "playwright",
+    "playwright-core",
+  ],
 
   // Dev-only: let Tailscale/LAN hosts load the dev server's scripts, or pages
   // opened there never hydrate. Read from process.env (not env()) because the

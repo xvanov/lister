@@ -24,6 +24,7 @@ import { ZodError } from "zod";
 import { auth } from "@repo/auth";
 import { db, recordAudit, type AuditWriter, type Prisma } from "@repo/db";
 import { env } from "@repo/env";
+import { resolveBearer, type ApiCaller, type Scope } from "@repo/lister";
 import { clientIp, rateLimit } from "@repo/security";
 
 import { domainErrorCode } from "./errors";
@@ -37,13 +38,19 @@ export interface TRPCContextShape {
   db: typeof db;
   session: Awaited<ReturnType<typeof auth.api.getSession>>;
   headers: Headers;
+  /** The calling app, when the request carries `Authorization: Bearer <key>`. */
+  apiCaller?: ApiCaller | null;
 }
 
 export async function createTRPCContext(
   opts: CreateContextOptions,
 ): Promise<TRPCContextShape> {
-  const session = await auth.api.getSession({ headers: opts.headers });
-  return { db, session, headers: opts.headers };
+  const hasBearer = /^Bearer\s/i.test(opts.headers.get("authorization") ?? "");
+  const apiCaller = hasBearer ? await resolveBearer(opts.headers) : null;
+  const session = hasBearer
+    ? null
+    : await auth.api.getSession({ headers: opts.headers });
+  return { db, session, headers: opts.headers, apiCaller };
 }
 
 export type TRPCContext = Awaited<ReturnType<typeof createTRPCContext>>;
@@ -160,6 +167,34 @@ export const orgProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   }
   return next({ ctx: withAudit(ctx, organizationId) });
 });
+
+/**
+ * A procedure for calling apps (API keys, `external.*`). Tenant isolation is
+ * the same as orgProcedure's: `ctx.organizationId` comes from the key, never
+ * from the request, and every query filters on it.
+ *
+ *   accounts: apiProcedure("accounts:read").query(...)
+ */
+export function apiProcedure(scope: Scope) {
+  return publicProcedure.use(({ ctx, next }) => {
+    const caller = ctx.apiCaller;
+    if (!caller) {
+      throw new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "A valid API key is required (Authorization: Bearer <key>).",
+      });
+    }
+    if (!caller.scopes.includes(scope)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `This API key lacks the "${scope}" scope.`,
+      });
+    }
+    return next({
+      ctx: { ...ctx, apiCaller: caller, organizationId: caller.organizationId },
+    });
+  });
+}
 
 /**
  * An org procedure for owners and admins only, checked against this tenant's

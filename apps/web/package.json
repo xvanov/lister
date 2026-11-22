@@ -18,6 +18,7 @@
     "@repo/db": "*",
     "@repo/env": "*",
     "@repo/jobs": "*",
+    "@repo/lister": "*",
     "@repo/outbound": "*",
     "@repo/security": "*",
     "@repo/storage": "*",
@@ -41,7 +42,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "1.65.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.0",
