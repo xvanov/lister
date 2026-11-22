@@ -1,0 +1,16 @@
+import { activityRouter } from "./routers/activity";
+import { healthRouter } from "./routers/health";
+import { itemsRouter } from "./routers/items";
+import { mediaRouter } from "./routers/media";
+import { orgRouter } from "./routers/org";
+import { createTRPCRouter } from "./trpc";
+
+export const appRouter = createTRPCRouter({
+  health: healthRouter,
+  org: orgRouter,
+  items: itemsRouter,
+  media: mediaRouter,
+  activity: activityRouter,
+});
+
+export type AppRouter = typeof appRouter;

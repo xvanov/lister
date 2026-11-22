@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── static checks + unit/integration tests ────────────────────────────
+  # Postgres + Redis: *.int.test.ts prove tenant isolation against real SQL, in
+  # a throwaway schema (packages/db/testing/global-setup.ts), and the rate-limit
+  # counter script against real Redis (packages/security/test). Costs a few
+  # seconds of container start; no extra installs.
+  static:
+    name: lint · types · unit
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg17-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+          # As dev and prod (docker-compose*.yml): builtin collation.
+          POSTGRES_INITDB_ARGS: "--locale-provider=builtin --builtin-locale=C.UTF-8"
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d app"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app?schema=public
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app
+      REDIS_URL: redis://localhost:6379
+      TEST_REDIS_URL: redis://localhost:6379
+      BETTER_AUTH_SECRET: ci-secret-not-for-production-use-0000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # Turbo's local cache, so packages a change cannot affect replay instead
+      # of re-running (typecheck alone grew 16s → 44s as packages were added).
+      # Safe: packages have no build step, but turbo still hashes each
+      # dependency's files into its dependents (verified: editing
+      # packages/env changes the hash of web#typecheck). Measured on 4 cores:
+      # cold 43s, apps/web edit 4s, packages/ai edit 26s. ~200KB per run
+      # (logs only); entries untouched for 14 days are pruned before saving.
+      # A PR restores main's latest cache through the restore-keys prefix.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo/cache
+          key: turbo-static-${{ runner.os }}-${{ github.sha }}
+          restore-keys: turbo-static-${{ runner.os }}-
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - if: always()
+        run: find .turbo/cache -type f -mtime +14 -delete 2>/dev/null || true
+
+  # ── shell scripts (+ production ops scripts) ──────────────────────────
+  # shellcheck, at the same pinned version as local.
+  # With the ops module: the migration guard's unit test + a real backup →
+  # restore round trip (scripts/backup.sh and restore.sh against a throwaway
+  # Postgres from docker-compose.prod.yml). The deploy/rollback path is NOT
+  # run here: it needs full image builds and is proven by hand (docs/deploy.md).
+  # No Node install; runs in parallel with the other jobs, so it adds nothing
+  # to the wall-clock time of a PR.
+  ops:
+    name: ops scripts (shellcheck · backup/restore)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make lint-sh SHELLCHECK_DOCKER=1
+      - run: make test-ops
+
+  # ── the gate that matters: does the built app actually run? ───────────
+  # This job runs scripts/smoke.sh — the SAME script as `make smoke` and the
+  # software factory — so CI and the local gate cannot drift. The script brings
+  # up its own isolated Postgres, Redis and mail catcher with docker compose,
+  # builds, boots the web server AND the worker, and drives the browser journey.
+  # Do not re-inline its steps here; change the script.
+  smoke:
+    name: smoke (real build, real browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      # Headless runs use Chromium's headless shell, not the full browser:
+      # `--only-shell` downloads ~270MB instead of ~650MB (measured 4s vs 23s).
+      # Not cached on purpose — restoring a cache of that size costs about what
+      # the download does (Playwright's own CI guidance says the same).
+      - run: npx playwright install chromium --only-shell --with-deps
+
+      - run: bash scripts/smoke.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
+
+  # ── the images that actually get deployed ─────────────────────────────
+  # Built with buildx from the compose file's own build definitions (bake reads
+  # docker-compose.yml, so the targets cannot drift from `make stack`).
+  #
+  # Why it is fast (measured locally, both images):
+  #   * no image export: the job proves the images BUILD; loading them into the
+  #     runner's image store only to throw them away was ~45s of the old ~115s
+  #   * the Dockerfiles `turbo prune` and install from manifests before copying
+  #     sources, so a source-only change reuses the `npm ci` layers — from the
+  #     GitHub Actions layer cache below (one scope per image, or the two
+  #     targets overwrite each other's cache index)
+  # Cold 35s → 24s; after a source-only edit with a warm cache 36s → 8s.
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      # cleanup: false — removing the builder (and its GBs of state) took
+      # 13–16s in the post step, on a runner that is thrown away anyway.
+      - uses: docker/setup-buildx-action@v3
+        with:
+          cleanup: false
+      # bake-action (not a bare `run: docker buildx bake`) because it hands the
+      # Actions cache token to buildx; `type=gha` cannot authenticate without it.
+      #
+      # In practice the `npm ci` layer misses on almost every PR: it is keyed
+      # on the pruned lockfile, every package.json AND schema.prisma, and
+      # #5 #7 #8 #9 #10 #11 each changed at least one. So each run builds
+      # node_modules and then EXPORTS it (~1GB, mode=max). Measured locally on
+      # 4 cores, #11 built from #10's cache: npm ci 17s, next build 16s, cache
+      # export 47s (gzip). compression=zstd: export 18s, total 84s → 58s, and
+      # ~10% smaller blobs (the repo is over the 10GB Actions cache quota, so
+      # GitHub evicts). ignore-error: a cache-service hiccup must not fail CI.
+      - uses: docker/bake-action@v6
+        with:
+          source: .
+          files: docker-compose.yml
+          targets: web,worker
+          set: |
+            web.cache-from=type=gha,scope=web
+            web.cache-to=type=gha,scope=web,mode=max,compression=zstd,ignore-error=true
+            worker.cache-from=type=gha,scope=worker
+            worker.cache-to=type=gha,scope=worker,mode=max,compression=zstd,ignore-error=true

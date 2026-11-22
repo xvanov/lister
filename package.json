@@ -1,0 +1,50 @@
+{
+  "name": "lister",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lister",
+  "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "dev": "turbo run dev --filter=web --filter=worker",
+    "dev:web": "turbo run dev --filter=web",
+    "dev:worker": "turbo run dev --filter=worker",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml}\"",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "npm run test:e2e -w web",
+    "smoke": "bash scripts/smoke.sh",
+    "infra:up": "docker compose up -d --wait db redis mailpit && bash scripts/lib/collation.sh",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && npm run infra:up",
+    "stack:up": "docker compose --profile full up -d --build",
+    "stack:down": "docker compose --profile full down",
+    "db:generate": "npm run generate -w @repo/db",
+    "db:migrate": "npm run migrate -w @repo/db",
+    "db:deploy": "npm run deploy -w @repo/db",
+    "db:seed": "npm run seed -w @repo/db",
+    "db:studio": "npm run studio -w @repo/db",
+    "db:reset": "npm run reset -w @repo/db",
+    "auth:schema": "npm run schema -w @repo/auth",
+    "outbound:freeze": "npm run freeze -w @repo/outbound --",
+    "postinstall": "npm run db:generate",
+    "inbox": "echo 'Local mail inbox: http://localhost:8097'"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "prettier": "^3.6.2",
+    "turbo": "^2.10.7",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.65.0"
+  }
+}

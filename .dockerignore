@@ -1,0 +1,19 @@
+**/node_modules
+**/.next
+**/.turbo
+**/.expo
+**/dist
+**/build
+**/coverage
+**/test-results
+**/playwright-report
+packages/db/generated
+storage
+# deploy state + database dumps: never in a build context (or an image)
+.deploy
+backups
+.git
+.env
+.env.*
+!.env.example
+*.log

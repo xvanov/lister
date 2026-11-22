@@ -1,0 +1,376 @@
+// ─────────────────────────────────────────────────────────────────────────
+// Prisma schema.
+//
+// Two groups of models:
+//   1. AUTH — owned by better-auth. Do NOT hand-edit field names; they are
+//      part of better-auth's contract. Regenerate with `npm run auth:schema`
+//      after changing plugins in packages/auth, then `npm run db:migrate`.
+//   2. APP — yours. Every app model carries `orgId` and is queried through
+//      the org-scoped tRPC procedures (see packages/api/src/trpc.ts), so a
+//      tenant can never read another tenant's rows.
+// ─────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../generated"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────── AUTH (better-auth) ──────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions       Session[]
+  accounts       Account[]
+  members        Member[]
+  invitations    Invitation[]
+  items          Item[]
+  mediaAssets    MediaAsset[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Written by the better-auth organization plugin: the tenant this session
+  // is currently acting in. Every org-scoped query keys off it.
+  activeOrganizationId String?
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ───────────────────── MULTI-TENANCY (organization plugin) ───────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  // Required + unique: better-auth's organization plugin treats the slug as the
+  // tenant's public handle and will not accept a null.
+  slug      String   @unique
+  logo      String?
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  members       Member[]
+  invitations   Invitation[]
+  items         Item[]
+  mediaAssets   MediaAsset[]
+  jobRuns       JobRun[]
+  auditEvents   AuditEvent[]
+  outbound      OutboundMessage[]
+  suppressed    OutboundSuppression[]
+
+  @@map("organization")
+}
+
+model Member {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           String       @default("member")
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("member")
+}
+
+model Invitation {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           String?
+  status         String       @default("pending")
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  inviterId      String
+  user           User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitation")
+}
+
+// ────────────────────────────── APP MODELS ───────────────────────────────
+
+/// The demo domain object. Replace with your own — but keep the `orgId`
+/// column and the `@@index([organizationId, createdAt])` shape.
+model Item {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  notes          String?
+  done           Boolean      @default(false)
+  createdById    String
+  createdBy      User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@map("item")
+}
+
+
+
+/// A blob in packages/storage. The row is the source of truth for metadata;
+/// `key` is the driver-agnostic object key.
+model MediaAsset {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  key            String       @unique
+  filename       String
+  contentType    String
+  sizeBytes      Int
+  /// Null for files nobody uploaded through the app: attachments of inbound
+  /// messages (packages/inbound) arrive from outside.
+  uploadedById   String?
+  uploadedBy     User?        @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("media_asset")
+}
+
+
+
+/// Background-job observability. The queue is Redis (ephemeral); this table
+/// is the durable record of what ran, so a job that vanishes is visible.
+///
+/// `organizationId` is the tenant the job ran FOR, taken from the payload's
+/// `organizationId`. Null means a system job (maintenance, fan-out schedules)
+/// that belongs to no tenant; those are never shown to a tenant.
+model JobRun {
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  jobId          String
+  name           String
+  status         String        @default("queued")
+  attempts       Int           @default(0)
+  payload        String?
+  error          String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([name, createdAt])
+  @@index([status])
+  @@map("job_run")
+}
+
+/// Who did what to which thing, in which tenant. Append-only: nothing in the
+/// app updates or deletes a row (an org's rows go when the org does).
+///
+/// Write through `ctx.audit(...)` in packages/api (it fills actor, org, ip and
+/// user agent), or `recordAudit` from @repo/db outside a request.
+model AuditEvent {
+  id             String        @id @default(cuid())
+  /// Null only for genuinely global actions; those are never shown to a tenant.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// "user" | "system" | "job"
+  actorType      String        @default("user")
+  /// User id, job name, ... depending on actorType.
+  actorId        String?
+  /// Dotted verb: `item.create`, `item.delete`, `member.invite`.
+  action         String
+  targetType     String
+  targetId       String?
+  /// Anything worth keeping: the changed fields, the before/after, the reason.
+  metadata       Json?
+  ip             String?
+  userAgent      String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_event")
+}
+
+/// Every outbound message ATTEMPT (email, push, sms), sent or not.
+/// Written by packages/outbound before the provider is called, so a message
+/// cannot leave without a row; blocked attempts carry the gate that stopped them.
+///
+/// Null organizationId = system mail (sign-up verification, which happens
+/// before the account has an org); never shown to a tenant.
+model OutboundMessage {
+  id                String           @id @default(cuid())
+  organizationId    String?
+  organization      Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// "email" | "sms" | "push" | "mobile_push"
+  channel           String
+  recipient         String
+  subject           String?
+  /// What sent it: `auth.verify-email`, `items.digest`. Grep-able.
+  purpose           String
+  /// "pending" (provider being called) | "sent" | "failed" | "blocked"
+  status            String
+  /// Which gate stopped it (SAFE_MODE, FROZEN, VOLUME, ...) when blocked.
+  blockReason       String?
+  /// Human-readable why, or the provider error when failed.
+  detail            String?
+  providerMessageId String?
+  actorUserId       String?
+  /// The caller's key for "this one logical message" (e.g. `invoice.42.reminder`).
+  /// Unique per tenant (`idempotencyScope`): a retry with the same key reuses
+  /// this row and never sends twice once sent.
+  idempotencyKey    String?
+  /// The tenant id, or "system" for rows with no tenant: the key's namespace.
+  /// A column rather than organizationId itself because Postgres treats NULLs
+  /// as distinct, and system keys must collide too.
+  idempotencyScope  String?
+  /// When a sender last took this row to send ("pending" since then). A
+  /// pending row claimed longer ago than the in-flight window is abandoned.
+  claimedAt         DateTime?
+  /// What the provider reported AFTER accepting it (webhooks, the SMS
+  /// reconcile job): "queued" | "sent" | "delayed" | "delivered" | "bounced"
+  /// | "undelivered" | "failed" | "complained" | "suppressed". `status` above
+  /// stays the guard's own verdict; this is the recipient side.
+  deliveryStatus    String?
+  /// The provider's reason (bounce message, Twilio error code explained).
+  deliveryDetail    String?
+  deliveryUpdatedAt DateTime?
+  createdAt         DateTime         @default(now())
+  finishedAt        DateTime?
+
+  @@unique([idempotencyScope, idempotencyKey])
+  @@index([organizationId, createdAt])
+  @@index([recipient, createdAt])
+  @@index([status, createdAt])
+  @@index([channel, providerMessageId])
+  @@map("outbound_message")
+}
+
+/// Recipients who must not be messaged: bounces, complaints, unsubscribes.
+/// Null organizationId = suppressed everywhere (a hard bounce); otherwise only
+/// for that tenant's messages (an unsubscribe from one workspace).
+model OutboundSuppression {
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  channel        String
+  /// Normalised the same way the guard normalises (lowercased email, E.164).
+  recipient      String
+  reason         String
+  createdAt      DateTime      @default(now())
+
+  @@unique([channel, recipient, organizationId])
+  @@index([channel, recipient])
+  @@map("outbound_suppression")
+}
+
+
+/// Operator notifications (packages/notify): alerts for whoever RUNS the app,
+/// never shown to a tenant. Every call to notifyOperator writes one row, sent
+/// or not; the send itself is also an outbound_message row (outboundMessageId).
+///
+/// organizationId is context ("which tenant hit the AI cap"), deliberately NOT
+/// a foreign key: the operator's history must survive the tenant's deletion.
+model Notification {
+  id                String    @id @default(cuid())
+  createdAt         DateTime  @default(now())
+  /// "low" | "normal" | "high" | "urgent"
+  priority          String
+  title             String
+  body              String
+  url               String?
+  tags              String[]
+  /// Same key within the dedupe window = recorded as "deduped", not sent.
+  dedupeKey         String?
+  /// Where it went (or would go): "push" | "email" | "console".
+  channel           String
+  /// "pending" | "sent" | "logged" (console) | "held" (waiting for the digest)
+  /// | "digested" | "deduped" | "blocked" | "failed"
+  status            String
+  /// Why it was held/blocked, or the send error.
+  error             String?
+  organizationId    String?
+  /// The digest notification that carried this held one.
+  digestId          String?
+  outboundMessageId String?
+  /// When a sender last took it to send ("pending" since then). A pending row
+  /// claimed longer ago than the in-flight window is abandoned (crash).
+  claimedAt         DateTime?
+  sentAt            DateTime?
+
+  @@index([dedupeKey, createdAt])
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("notification")
+}
+
+/// Small runtime switches that must survive a Redis restart and be shared by
+/// every process: the outbound kill switch (`outbound.freeze`) and the last
+/// operator digest slot (`notify.digest.lastSlot`) live here.
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("app_setting")
+}
+
+// ─────────────────────── AGENTS, PROPOSALS, API KEYS ─────────────────────
+

@@ -1,0 +1,161 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Development stack.
+#
+#   docker compose up -d db redis          # infra only (the normal dev flow:
+#                                          # web + mobile run on the host so
+#                                          # Metro can reach your phone)
+#   docker compose --profile full up -d --build   # everything containerised
+#
+# Ports are deliberately non-default so this stack can coexist with other
+# projects on the same machine (5502/6449/3240 instead of 5432/6379/3000), and
+# every one of them is overridable from .env.
+#
+# NOTHING here is hardcoded to one app. No `container_name`, no fixed host port:
+# a template whose containers are called `app-db` can only ever run ONE app per
+# machine, and the second app you generate from it silently fights the first.
+# Compose names containers `<project>-<service>-1`, and the project defaults to
+# the directory name — so set COMPOSE_PROJECT_NAME plus the *_PORT vars in .env
+# and two apps from this template run side by side.
+# ──────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+      # NEW volumes only (initdb): sort text with Postgres's own builtin
+      # C.UTF-8 collation, not the C library's, so an image with a different
+      # libc (Alpine/musl ↔ Debian/glibc) cannot silently invalidate text
+      # indexes. Existing volumes keep theirs: scripts/lib/collation.sh.
+      POSTGRES_INITDB_ARGS: "--locale-provider=builtin --builtin-locale=C.UTF-8"
+    ports:
+      # ⚠ LOOPBACK BINDING IS LOAD-BEARING. Published on 0.0.0.0 this port is
+      # reachable from every container on the default bridge via the host
+      # gateway — including any sandbox that runs untrusted code. With the
+      # default postgres:postgres credentials that is a full database
+      # compromise. Tunnel it (ssh -L / tailscale) instead of republishing.
+      - "127.0.0.1:${DB_PORT:-5502}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      # ⚠ Same threat as above, worse impact: this Redis has no auth and is
+      # the job broker. Anything that reaches it can enqueue work the worker
+      # will execute. Keep it on loopback.
+      - "127.0.0.1:${REDIS_PORT:-6449}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # A real SMTP server with a web inbox, entirely local. Nothing leaves the
+  # machine: Mailpit accepts mail and shows it at http://localhost:8097, which is
+  # what makes the sign-up confirmation flow testable with no third-party account.
+  # It never delivers onward — for mail that must reach real inboxes, point
+  # SMTP_* at a relay.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      # Loopback only — an open relay on a shared network is not a dev convenience.
+      - "127.0.0.1:${MAIL_SMTP_PORT:-1097}:1025" # SMTP
+      - "127.0.0.1:${MAIL_UI_PORT:-8097}:8025" # web inbox + REST API
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # A SECOND, throwaway mail catcher, used only by scripts/smoke.sh.
+  #
+  # Why not reuse the one above: the suite sends a handful of messages per run,
+  # all newest-first in the inbox, and their links point at the gate's isolated
+  # port — which stops existing when the run ends. Sharing one inbox buries your
+  # real dev mail under machine noise whose links are already dead, and "the
+  # confirmation link is broken" is then indistinguishable from a real bug.
+  mailpit-test:
+    image: axllent/mailpit:latest
+    profiles: ["test"]
+    environment:
+      MP_MAX_MESSAGES: 200
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - "127.0.0.1:${TEST_MAIL_SMTP_PORT:-1098}:1025" # SMTP
+      - "127.0.0.1:${TEST_MAIL_UI_PORT:-8098}:8025" # REST API the e2e suite reads
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the compose network the service names replace localhost.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/app?schema=public
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      # .env holds a HOST path (setup.sh pins it); in here it is the volume.
+      STORAGE_LOCAL_DIR: /app/storage
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+    ports:
+      - "${WEB_PORT:-3240}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - storage:/app/storage
+
+  worker:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/app?schema=public
+      REDIS_URL: redis://redis:6379
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      STORAGE_LOCAL_DIR: /app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - storage:/app/storage
+
+volumes:
+  pgdata:
+  redisdata:
+  storage:

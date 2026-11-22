@@ -1,0 +1,22 @@
+{
+  "template": "c447e7c",
+  "profile": "web",
+  "modules": [
+    "core",
+    "ops"
+  ],
+  "removed": [
+    "ai",
+    "agent",
+    "rag",
+    "evals",
+    "inbound",
+    "sms",
+    "mobile",
+    "push-mobile",
+    "glasses",
+    "desktop",
+    "ml",
+    "hackathon"
+  ]
+}
